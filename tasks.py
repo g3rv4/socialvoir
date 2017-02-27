@@ -39,7 +39,7 @@ def process_tweet(data):
                     if dest_list is None:
                         dest_list = twitter.create_list(name='voir-%s' % target['screen_name'],
                                                         description='List created by @SocialVoir to follow account %s' % target['id_str'])
-                        reply(data, 'list created here: https://twitter.com/%s adding members to it now!' % dest_list['uri'])
+                        reply(data, 'list created here: https://twitter.com%s adding members to it now!' % dest_list['uri'])
                     else:
                         reply(data, "updating the list... if you see no new members, try later... you may be subject to "
                                     "this beautiful twitter secret limit https://gmc.uy/secret-limit")
