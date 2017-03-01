@@ -15,7 +15,7 @@ own_twitter = Twython(os.environ['TWITTER_API_KEY'], os.environ['TWITTER_API_SEC
 
 @app.task
 def process_tweet(data):
-    match = re.search(' ((voir)|(stop)|(unvoir)) @[a-zA-Z0-9_]+$', data['text'])
+    match = re.search(' ((voir)|(stop)|(unvoir)) @?([a-zA-Z0-9_]+)$', data['text'])
     if match:
         user_data = get_user_data(data)
         try:
@@ -24,7 +24,12 @@ def process_tweet(data):
                                   user_data['token'], user_data['secret'])
 
                 action = match.group(1)
-                target = data['entities']['user_mentions'][-1]
+                users = twitter.lookup_user(screen_name=match.group(5))
+                if not users:
+                    reply(data, 'I could not find the user you specified')
+                    return
+
+                target = users[0]
 
                 # get the list
                 next_cursor = None
@@ -37,12 +42,12 @@ def process_tweet(data):
 
                 if action == 'voir':
                     if dest_list is None:
-                        dest_list = twitter.create_list(name='voir-%s' % target['screen_name'],
+                        dest_list = twitter.create_list(name='voir-%s' % target['screen_name'], mode='private',
                                                         description='List created by @SocialVoir to follow account %s' % target['id_str'])
                         reply(data, 'list created here: https://twitter.com%s adding members to it now!' % dest_list['uri'])
                     else:
-                        reply(data, "updating the list... if you see no new members, try later... you may be subject to "
-                                    "this beautiful twitter secret limit https://gmc.uy/secret-limit")
+                        twitter.update_list(list_id=dest_list['id_str'], mode='private')
+                        reply(data, "updating the list... if you see no new members, try later... you may have reached 1000 adds/day on your account")
                     update_list(twitter, dest_list)
                 elif action in ('stop', 'unvoir'):
                     if dest_list is not None:
