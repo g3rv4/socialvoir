@@ -16,45 +16,63 @@ own_twitter = Twython(os.environ['TWITTER_API_KEY'], os.environ['TWITTER_API_SEC
 @app.task
 def process_tweet(data):
     match = re.search(' ((voir)|(stop)|(unvoir)) @?([a-zA-Z0-9_]+)$', data['text'])
-    if match:
+    update_all = 'update all' in data['text'].lower()
+    if match or update_all:
         user_data = get_user_data(data)
         try:
             if user_data:
                 twitter = Twython(os.environ['TWITTER_API_KEY'], os.environ['TWITTER_API_SECRET'],
                                   user_data['token'], user_data['secret'])
 
-                action = match.group(1)
-                users = twitter.lookup_user(screen_name=match.group(5))
-                if not users:
-                    reply(data, 'I could not find the user you specified')
+                if update_all:
+                    to_update = 0
+                    next_cursor = None
+                    while True:
+                        lists = twitter.show_owned_lists(cursor=next_cursor)
+                        for l in (l for l in lists['lists'] if re.search('to follow account [0-9]+$', l['description'])):
+                            update_list(twitter, data['user']['id_str'], l)
+                            to_update += 1
+
+                        if lists['next_cursor_str'] == '0':
+                            break
+                        next_cursor = lists['next_cursor_str']
+
+                    reply(data,
+                          "updating %i lists... if you see no new members, try later... you may have reached 1000 adds/day on your account" % to_update)
                     return
-
-                target = users[0]
-
-                # get the list
-                next_cursor = None
-                while True:
-                    lists = twitter.show_owned_lists(cursor=next_cursor)
-                    dest_list = next((l for l in lists['lists'] if re.search(' %s$' % target['id_str'], l['description'])), None)
-                    if dest_list or lists['next_cursor_str'] == '0':
-                        break
-                    next_cursor = lists['next_cursor_str']
-
-                if action == 'voir':
-                    if dest_list is None:
-                        dest_list = twitter.create_list(name='voir-%s' % target['screen_name'], mode='private',
-                                                        description='List created by @SocialVoir to follow account %s' % target['id_str'])
-                        reply(data, 'list created here: https://twitter.com%s adding members to it now!' % dest_list['uri'])
-                    else:
-                        twitter.update_list(list_id=dest_list['id_str'], mode='private')
-                        reply(data, "updating the list... if you see no new members, try later... you may have reached 1000 adds/day on your account")
-                    update_list(twitter, dest_list)
-                elif action in ('stop', 'unvoir'):
-                    if dest_list is not None:
-                        twitter.delete_list(list_id=dest_list['id_str'])
-                        reply(data, 'alright, that list should be gone now')
                 else:
-                    reply(data, 'invalid action, visit https://voir.social for details')
+                    action = match.group(1)
+                    users = twitter.lookup_user(screen_name=match.group(5))
+                    if not users:
+                        reply(data, 'I could not find the user you specified')
+                        return
+
+                    target = users[0]
+
+                    # get the list
+                    next_cursor = None
+                    while True:
+                        lists = twitter.show_owned_lists(cursor=next_cursor)
+                        dest_list = next((l for l in lists['lists'] if re.search(' %s$' % target['id_str'], l['description'])), None)
+                        if dest_list or lists['next_cursor_str'] == '0':
+                            break
+                        next_cursor = lists['next_cursor_str']
+
+                    if action == 'voir':
+                        if dest_list is None:
+                            dest_list = twitter.create_list(name='voir-%s' % target['screen_name'], mode='private',
+                                                            description='List created by @SocialVoir to follow account %s' % target['id_str'])
+                            reply(data, 'list created here: https://twitter.com%s adding members to it now!' % dest_list['uri'])
+                        else:
+                            twitter.update_list(list_id=dest_list['id_str'], mode='private')
+                            reply(data, "updating the list... if you see no new members, try later... you may have reached 1000 adds/day on your account")
+                        update_list(twitter, data['user']['id_str'], dest_list)
+                    elif action in ('stop', 'unvoir'):
+                        if dest_list is not None:
+                            twitter.delete_list(list_id=dest_list['id_str'])
+                            reply(data, 'alright, that list should be gone now')
+                    else:
+                        reply(data, 'invalid action, visit https://voir.social for details')
         except TwythonAuthError:
             reply(data, "it seems like your authorization tokens no longer work. Visit https://voir.social to fix that")
 
@@ -93,11 +111,12 @@ def get_user_data(data):
     return {'token': parts[0], 'secret': parts[1]}
 
 
-def update_list(twitter, dest_list):
+def update_list(twitter, user_id, dest_list):
     match = re.search(' ([0-9]+)$', dest_list['description'])
     if match:
         target = match.group(1)
-        current_ids = twitter.get_friends_ids(user_id=target, stringify_ids=True, count=5000)['ids']
+        user_friends = twitter.get_friends_ids(user_id=user_id, stringify_ids=True, count=5000)['ids']
+        current_ids = [i for i in twitter.get_friends_ids(user_id=target, stringify_ids=True, count=5000)['ids'] if i not in user_friends]
 
         users_on_list = twitter.get_list_members(list_id=dest_list['id_str'], count=5000, include_entities=False,
                                                  skip_status=True)
